@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shark Guardian</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.7.77/Tone.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Bangers&display=swap" rel="stylesheet">
+    <style>
+        body {
+            background-color: #0077be;
+            color: #ffffff;
+            font-family: 'Arial', sans-serif;
+            overflow: hidden;
+            touch-action: none;
+        }
+        canvas {
+            background: linear-gradient(to bottom, #0077be, #00446b);
+            display: block;
+            cursor: none;
+            transition: filter 0.5s ease-out;
+        }
+        #ui-container {
+            font-family: 'Bangers', cursive;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+        }
+        .modal {
+            background-color: rgba(0, 50, 100, 0.85);
+            border: 4px solid #ffffff;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+            max-width: 90vw;
+        }
+        .button {
+            background: linear-gradient(to bottom, #f9a825, #f57f17);
+            border: 2px solid #ffffff;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+            transition: all 0.2s ease-in-out;
+        }
+        .button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 12px rgba(0,0,0,0.4);
+        }
+        .heart {
+            color: #ff4757;
+            font-size: 3rem;
+            text-shadow: 2px 2px 2px rgba(0,0,0,0.5);
+        }
+        .stat-line {
+            font-size: 1.5rem;
+            line-height: 2rem;
+        }
+    </style>
+</head>
+<body class="flex items-center justify-center h-screen m-0">
+
+    <div id="ui-container" class="absolute top-0 left-0 w-full h-full flex flex-col items-center p-4 z-10 pointer-events-none">
+        <!-- Top UI -->
+        <div class="w-full flex justify-between items-start">
+            <div id="score-display" class="text-4xl lg:text-5xl text-white">Score: 0</div>
+            <div id="health-display" class="flex gap-2"></div>
+        </div>
+
+        <!-- Modals Container -->
+        <div class="flex-grow flex items-center justify-center w-full pointer-events-auto">
+            <!-- Start Game Modal -->
+            <div id="start-modal" class="modal rounded-2xl p-6 lg:p-10 text-center">
+                <h1 class="text-5xl lg:text-7xl text-yellow-300 mb-4">Shark Guardian</h1>
+                <div class="text-lg lg:text-xl text-left space-y-3 mb-6 bg-black bg-opacity-20 p-4 rounded-lg">
+                    <p><strong class="text-yellow-300">GOAL:</strong> Protect the shark pup!</p>
+                    <p><strong class="text-yellow-300">MOVE:</strong> Use your mouse or finger to guide the Guardian Shark.</p>
+                    <p><strong class="text-yellow-300">DEFEND:</strong> Block jellyfish and nets before they hit the pup.</p>
+                    <p><strong class="text-yellow-300">DASH:</strong> Click or Tap to dash! Use it to save the pup in emergencies.</p>
+                    <p><strong class="text-red-400">BEWARE:</strong> Watch out for fast-moving Piranhas!</p>
+                </div>
+                <button id="start-button" class="button text-white text-3xl lg:text-4xl font-bold py-4 px-8 rounded-xl">Start Game</button>
+            </div>
+
+            <!-- Game Over Modal -->
+            <div id="game-over-modal" class="modal rounded-2xl p-8 lg:p-12 text-center hidden">
+                <h1 class="text-6xl lg:text-8xl text-red-500 mb-4">Game Over</h1>
+                <p id="final-score" class="text-3xl lg:text-4xl mb-6">Your Score: 0</p>
+                <div id="stats-container" class="text-white mb-8 space-y-2">
+                    <!-- Stats will be inserted here -->
+                </div>
+                <button id="restart-button" class="button text-white text-3xl lg:text-4xl font-bold py-4 px-8 rounded-xl">Play Again</button>
+            </div>
+        </div>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        // --- Basic Setup ---
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreDisplay = document.getElementById('score-display');
+        const healthDisplay = document.getElementById('health-display');
+        const startModal = document.getElementById('start-modal');
+        const gameOverModal = document.getElementById('game-over-modal');
+        const startButton = document.getElementById('start-button');
+        const restartButton = document.getElementById('restart-button');
+        const finalScoreEl = document.getElementById('final-score');
+        const statsContainer = document.getElementById('stats-container');
+
+        let canvasWidth, canvasHeight;
+        let gameState = 'start';
+        let score = 0;
+        let animationFrameId;
+        let pearlsCollectedCount = 0;
+        let dangersDefendedCount = 0;
+        let screenShakeTime = 0;
+
+        // --- Audio Setup ---
+        const synth = new Tone.Synth().toDestination();
+        const metalSynth = new Tone.MetalSynth({ frequency: 50, envelope: { attack: 0.001, decay: 0.1, release: 0.01 }, harmonicity: 8.5, modulationIndex: 20, resonance: 4000, octaves: 1.5 }).toDestination();
+        const noiseSynth = new Tone.NoiseSynth({ noise: { type: 'white' }, envelope: { attack: 0.005, decay: 0.1, sustain: 0 } }).toDestination();
+        const dashSynth = new Tone.MembraneSynth({ pitchDecay: 0.01, octaves: 5, oscillator: { type: "sine" }, envelope: { attack: 0.001, decay: 0.2, sustain: 0.01, release: 0.2 } }).toDestination();
+        const finalHitSynth = new Tone.FMSynth({ harmonicity: 3, modulationIndex: 10, detune: 0, oscillator: { type: "sine" }, envelope: { attack: 0.01, decay: 0.2, sustain: 0.1, release: 0.5 }, modulation: { type: "square" }, modulationEnvelope: { attack: 0.01, decay: 0.2, sustain: 0.2, release: 0.5 } }).toDestination();
+
+
+        function playSound(type) {
+            if (Tone.context.state !== 'running') Tone.context.resume();
+            try {
+                if (type === 'collect') synth.triggerAttackRelease("C5", "8n");
+                else if (type === 'defend') metalSynth.triggerAttackRelease("C2", "8n", Tone.now(), 0.8);
+                else if (type === 'damage') noiseSynth.triggerAttackRelease("8n");
+                else if (type === 'dash') dashSynth.triggerAttackRelease("C2", "8n");
+                else if (type === 'finalHit') finalHitSynth.triggerAttackRelease("A2", "4n");
+                else if (type === 'gameOver') synth.triggerAttackRelease("C3", "2n", Tone.now() + 0.5);
+            } catch (error) { console.error("Sound play error:", error); }
+        }
+
+        // --- Game Objects ---
+        const player = { x: 100, y: 100, radius: 40, speed: 0.15, isDefending: false, defendTime: 0, isDashing: false, dashTime: 0, dashCooldown: 1000, lastDash: 0 };
+        const child = { x: 0, y: 0, radius: 20, speed: 1.2, targetPearl: null, health: 3, isInvincible: false, invincibleTime: 0 };
+        let mouse = { x: player.x, y: player.y };
+        let pearls = [];
+        let dangers = [];
+        let particles = [];
+
+        // --- Drawing Functions ---
+        function drawShark(x, y, radius, isPlayer, isFlashing) {
+            if (isFlashing && Math.floor(Date.now() / 100) % 2 === 0) return;
+            ctx.fillStyle = isPlayer ? '#8DA3A5' : '#B0C4C6';
+            ctx.beginPath();
+            ctx.moveTo(x, y - radius * 0.6);
+            ctx.bezierCurveTo(x - radius * 1.5, y, x - radius * 0.5, y + radius, x, y + radius * 0.8);
+            ctx.bezierCurveTo(x + radius * 0.5, y + radius, x + radius * 1.5, y, x, y - radius * 0.6);
+            ctx.closePath();
+            ctx.fill();
+            ctx.fillStyle = isPlayer ? '#708082' : '#99AAB0';
+            ctx.beginPath();
+            ctx.moveTo(x + radius * 0.1, y - radius * 0.2);
+            ctx.lineTo(x + radius * 0.8, y - radius * 0.5);
+            ctx.lineTo(x + radius * 0.3, y + radius * 0.1);
+            ctx.closePath();
+            ctx.fill();
+            ctx.fillStyle = 'white';
+            ctx.beginPath();
+            ctx.arc(x - radius * 0.5, y - radius * 0.1, radius * 0.15, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = 'black';
+            ctx.beginPath();
+            ctx.arc(x - radius * 0.52, y - radius * 0.1, radius * 0.08, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        function drawJellyfish(d) {
+            const isNew = (Date.now() - d.spawnTime) < 500;
+            const headRadius = d.radius * 0.8;
+            ctx.fillStyle = isNew ? 'rgba(255, 0, 0, 0.9)' : 'rgba(255, 105, 180, 0.7)';
+            ctx.beginPath();
+            ctx.arc(d.x, d.y, headRadius, Math.PI, 0);
+            ctx.closePath();
+            ctx.fill();
+
+            // Tentacles
+            ctx.strokeStyle = isNew ? 'rgba(255, 100, 100, 0.8)' : 'rgba(255, 105, 180, 0.6)';
+            ctx.lineWidth = 2;
+            for (let i = 0; i < 5; i++) {
+                ctx.beginPath();
+                ctx.moveTo(d.x - headRadius + (i * headRadius / 2), d.y);
+                ctx.lineTo(d.x - headRadius + (i * headRadius / 2), d.y + d.radius * 1.5);
+                ctx.stroke();
+            }
+        }
+
+        function drawPiranha(d) {
+            const isNew = (Date.now() - d.spawnTime) < 500;
+            ctx.fillStyle = isNew ? '#FF0000' : '#4CAF50';
+            ctx.beginPath();
+            ctx.moveTo(d.x, d.y);
+            ctx.quadraticCurveTo(d.x - d.radius * 1.5, d.y - d.radius, d.x - d.radius * 2, d.y);
+            ctx.quadraticCurveTo(d.x - d.radius * 1.5, d.y + d.radius, d.x, d.y);
+            ctx.fill();
+
+            // Fin
+            ctx.fillStyle = isNew ? '#FF5555' : '#388E3C';
+            ctx.beginPath();
+            ctx.moveTo(d.x - d.radius * 0.5, d.y - d.radius * 0.2);
+            ctx.lineTo(d.x - d.radius, d.y - d.radius * 0.8);
+            ctx.lineTo(d.x - d.radius * 1.5, d.y - d.radius * 0.2);
+            ctx.closePath();
+            ctx.fill();
+
+            // Eye
+            ctx.fillStyle = 'white';
+            ctx.beginPath();
+            ctx.arc(d.x - d.radius * 0.5, d.y, d.radius * 0.2, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = 'black';
+            ctx.beginPath();
+            ctx.arc(d.x - d.radius * 0.5, d.y, d.radius * 0.1, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        function createParticles(x, y, count, color, speed) {
+            for (let i = 0; i < count; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                particles.push({
+                    x: x, y: y,
+                    vx: Math.cos(angle) * Math.random() * speed,
+                    vy: Math.sin(angle) * Math.random() * speed,
+                    radius: Math.random() * 3 + 1,
+                    life: 50 + Math.random() * 50,
+                    color: color
+                });
+            }
+        }
+
+        function updateAndDrawParticles() {
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.life--;
+                if (p.life <= 0) {
+                    particles.splice(i, 1);
+                    continue;
+                }
+                ctx.globalAlpha = p.life / 100;
+                ctx.fillStyle = p.color;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.globalAlpha = 1;
+            }
+        }
+        
+        // --- Game Logic ---
+        function update() {
+            if (gameState !== 'playing') return;
+
+            // Player movement
+            if (player.isDashing) {
+                const elapsed = Date.now() - player.dashTime;
+                if (elapsed > 200) {
+                    player.isDashing = false;
+                }
+            } else {
+                 player.x += (mouse.x - player.x) * player.speed;
+                 player.y += (mouse.y - player.y) * player.speed;
+            }
+            if (player.isDashing) createParticles(player.x, player.y, 2, 'rgba(255,255,255,0.5)', 3);
+
+
+            // Child movement
+            if (child.targetPearl) {
+                const dx = child.targetPearl.x - child.x;
+                const dy = child.targetPearl.y - child.y;
+                const dist = Math.hypot(dx, dy);
+                if (dist > 1) {
+                    child.x += (dx / dist) * child.speed;
+                    child.y += (dy / dist) * child.speed;
+                }
+            } else {
+                findNewPearlForChild();
+            }
+            if (child.isInvincible && Date.now() > child.invincibleTime) {
+                child.isInvincible = false;
+            }
+
+            // Update dangers
+            dangers.forEach(d => { d.x += d.vx; d.y += d.vy; });
+
+            checkCollisions();
+            spawnEntities();
+            dangers = dangers.filter(d => d.x > -d.radius * 2 && d.x < canvasWidth + d.radius * 2 && d.y < canvasHeight + d.radius * 2);
+        }
+
+        function checkCollisions() {
+            // Child and pearls
+            if (child.targetPearl && Math.hypot(child.targetPearl.x - child.x, child.targetPearl.y - child.y) < child.radius + child.targetPearl.radius) {
+                score += 10;
+                pearlsCollectedCount++;
+                updateScore();
+                playSound('collect');
+                createParticles(child.targetPearl.x, child.targetPearl.y, 15, child.targetPearl.color, 4);
+                pearls = pearls.filter(p => p !== child.targetPearl);
+                child.targetPearl = null;
+                spawnPearl();
+            }
+
+            // Dangers
+            for (let i = dangers.length - 1; i >= 0; i--) {
+                const d = dangers[i];
+                // Player and dangers (defending)
+                if (Math.hypot(player.x - d.x, player.y - d.y) < player.radius + d.radius) {
+                    playSound('defend');
+                    dangersDefendedCount++;
+                    createParticles(d.x, d.y, 20, '#ff4757', 5);
+                    dangers.splice(i, 1);
+                    score += 5;
+                    updateScore();
+                    continue;
+                }
+
+                // Child and dangers (damage)
+                if (!child.isInvincible && Math.hypot(child.x - d.x, child.y - d.y) < child.radius + d.radius) {
+                    dangers.splice(i, 1);
+                    handleChildDamage();
+                    continue;
+                }
+            }
+        }
+
+        function handleChildDamage() {
+            child.health--;
+            updateHealthDisplay();
+            if (child.health <= 0) {
+                playSound('finalHit');
+                endGame();
+            } else {
+                playSound('damage');
+                child.isInvincible = true;
+                child.invincibleTime = Date.now() + 2000;
+            }
+        }
+        
+        function updateScore() { scoreDisplay.textContent = `Score: ${score}`; }
+        function updateHealthDisplay() {
+            healthDisplay.innerHTML = '';
+            for (let i = 0; i < 3; i++) {
+                const heart = document.createElement('span');
+                heart.className = 'heart';
+                heart.style.opacity = i < child.health ? '1' : '0.3';
+                heart.textContent = '♥';
+                healthDisplay.appendChild(heart);
+            }
+        }
+
+        function spawnEntities() {
+            if (Math.random() < 0.01 + score * 0.00012) {
+                let type;
+                const rand = Math.random();
+                if (rand < 0.4) {
+                    type = 'jellyfish';
+                } else if (rand < 0.7) {
+                    type = 'net';
+                } else {
+                    type = 'piranha';
+                }
+
+                const edge = Math.floor(Math.random() * 4);
+                let x, y;
+                let speed = 1 + Math.random() * 1.5 + score * 0.005;
+
+                if (type === 'piranha') {
+                    speed *= 1.5; // Piranhas are faster
+                }
+
+                if (edge === 0) { x = Math.random() * canvasWidth; y = -50; }
+                else if (edge === 1) { x = canvasWidth + 50; y = Math.random() * canvasHeight; }
+                else if (edge === 2) { x = Math.random() * canvasWidth; y = canvasHeight + 50; }
+                else { x = -50; y = Math.random() * canvasHeight; }
+
+                const angle = Math.atan2(child.y - y, child.x - x);
+                const vx = Math.cos(angle) * speed;
+                const vy = Math.sin(angle) * speed;
+                
+                let radius = 30;
+                if (type === 'jellyfish') radius = 20;
+                if (type === 'piranha') radius = 15;
+
+                const danger = { type, x, y, vx, vy, radius, spawnTime: Date.now() };
+                if (type === 'net') {
+                    const size = 60;
+                    danger.lines = [ {x1: x - size/2, y1: y - size/2, x2: x + size/2, y2: y - size/2}, {x1: x + size/2, y1: y - size/2, x2: x + size/2, y2: y + size/2}, {x1: x + size/2, y1: y + size/2, x2: x - size/2, y2: y + size/2}, {x1: x - size/2, y1: y + size/2, x2: x - size/2, y2: y - size/2}, {x1: x - size/2, y1: y - size/2, x2: x + size/2, y2: y + size/2} ];
+                }
+                dangers.push(danger);
+            }
+        }
+        
+        function spawnPearl() {
+            const colors = ['#FFD700', '#FF69B4', '#00FFFF', '#ADFF2F'];
+            pearls.push({ x: Math.random() * (canvasWidth - 100) + 50, y: Math.random() * (canvasHeight - 100) + 50, radius: 10, color: colors[Math.floor(Math.random() * colors.length)] });
+        }
+
+        function findNewPearlForChild() {
+            if (pearls.length === 0) return;
+            child.targetPearl = pearls.reduce((closest, p) => (Math.hypot(child.x - p.x, child.y - p.y) < Math.hypot(child.x - closest.x, child.y - closest.y) ? p : closest), pearls[0]);
+        }
+
+        // --- Game State Management ---
+        function startGame() {
+            canvas.style.filter = 'brightness(1)';
+            gameState = 'playing';
+            startModal.classList.add('hidden');
+            gameOverModal.classList.add('hidden');
+            score = 0;
+            pearlsCollectedCount = 0;
+            dangersDefendedCount = 0;
+            child.health = 3;
+            child.isInvincible = false;
+            updateScore();
+            updateHealthDisplay();
+            
+            player.x = canvasWidth / 2; player.y = canvasHeight / 4;
+            mouse.x = player.x; mouse.y = player.y;
+            child.x = canvasWidth / 2; child.y = canvasHeight / 2;
+
+            pearls = []; dangers = []; particles = [];
+            for(let i=0; i<5; i++) spawnPearl();
+            findNewPearlForChild();
+
+            if (animationFrameId) cancelAnimationFrame(animationFrameId);
+            gameLoop();
+        }
+
+        function endGame() {
+            if (gameState === 'gameOver') return;
+            gameState = 'gameOver';
+            screenShakeTime = 15;
+            canvas.style.filter = 'brightness(0.4)';
+            playSound('gameOver');
+            
+            setTimeout(() => {
+                finalScoreEl.textContent = `Your Score: ${score}`;
+                statsContainer.innerHTML = `
+                    <p class="stat-line">Pearls Collected: ${pearlsCollectedCount}</p>
+                    <p class="stat-line">Dangers Defended: ${dangersDefendedCount}</p>
+                `;
+                gameOverModal.classList.remove('hidden');
+            }, 1000);
+            
+            cancelAnimationFrame(animationFrameId);
+        }
+
+        // --- Main Loop ---
+        function gameLoop() {
+            ctx.save();
+            if (screenShakeTime > 0) {
+                screenShakeTime--;
+                const sx = (Math.random() - 0.5) * 10;
+                const sy = (Math.random() - 0.5) * 10;
+                ctx.translate(sx, sy);
+            }
+
+            ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+
+            pearls.forEach(p => { ctx.beginPath(); ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2); ctx.fillStyle = p.color; ctx.fill(); ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)'; ctx.lineWidth = 2; ctx.stroke(); });
+            
+            dangers.forEach(d => { 
+                if(d.type === 'jellyfish') {
+                    drawJellyfish(d);
+                } else if (d.type === 'piranha') {
+                    drawPiranha(d);
+                } else { 
+                    const isNew = (Date.now() - d.spawnTime) < 500; 
+                    ctx.strokeStyle = isNew ? '#FF0000' : '#654321'; 
+                    ctx.lineWidth = 4; ctx.beginPath(); 
+                    for(let i = 0; i < d.lines.length; i++) { 
+                        ctx.moveTo(d.lines[i].x1, d.lines[i].y1); 
+                        ctx.lineTo(d.lines[i].x2, d.lines[i].y2); 
+                    } 
+                    ctx.stroke(); 
+                } 
+            });
+            
+            updateAndDrawParticles();
+
+            drawShark(child.x, child.y, child.radius, false, child.isInvincible);
+            drawShark(player.x, player.y, player.radius, true, false);
+            
+            update();
+            
+            ctx.restore();
+            animationFrameId = requestAnimationFrame(gameLoop);
+        }
+
+        // --- Event Listeners & Initialization ---
+        function handleDash() {
+            const now = Date.now();
+            if (gameState === 'playing' && !player.isDashing && now - player.lastDash > player.dashCooldown) {
+                player.isDashing = true;
+                player.dashTime = now;
+                player.lastDash = now;
+                playSound('dash');
+                const angle = Math.atan2(mouse.y - player.y, mouse.x - player.x);
+                const dashSpeed = 25;
+                player.x += Math.cos(angle) * dashSpeed;
+                player.y += Math.sin(angle) * dashSpeed;
+            }
+        }
+
+        function resizeCanvas() {
+            canvasWidth = window.innerWidth;
+            canvasHeight = window.innerHeight;
+            canvas.width = canvasWidth;
+            canvas.height = canvasHeight;
+        }
+
+        function handleMouseMove(e) { mouse.x = e.clientX; mouse.y = e.clientY; }
+        function handleTouchMove(e) { if (e.touches.length > 0) { e.preventDefault(); mouse.x = e.touches[0].clientX; mouse.y = e.touches[0].clientY; } }
+
+        window.addEventListener('resize', resizeCanvas);
+        document.addEventListener('mousemove', handleMouseMove);
+        document.addEventListener('touchmove', handleTouchMove, { passive: false });
+        document.addEventListener('mousedown', handleDash);
+        document.addEventListener('touchstart', (e) => {
+            handleTouchMove(e); // Update position for tap-dashing
+            handleDash();
+        }, { passive: false });
+
+        startButton.addEventListener('click', () => { Tone.start(); startGame(); });
+        restartButton.addEventListener('click', startGame);
+
+        resizeCanvas();
+        scoreDisplay.textContent = '';
+        healthDisplay.innerHTML = '';
+    </script>
+</body>
+</html>
